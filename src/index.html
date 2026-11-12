@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>p2p_connect</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--fg:#1c1e22;--mute:#6b7280;--acc:#4f6bff;--line:#e3e5ea}
+@media (prefers-color-scheme:dark){:root{--bg:#14161a;--card:#1d2026;--fg:#eceef2;--mute:#9aa1ad;--line:#2c3039}}
+*{box-sizing:border-box}
+body{margin:0;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,"Hiragino Sans","Yu Gothic UI",sans-serif}
+main{max-width:480px;margin:0 auto;padding:20px}
+h1{font-size:20px;margin:0 0 16px}
+.tabs{display:flex;gap:8px;margin-bottom:14px}
+.tabs button{flex:1;padding:10px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:10px;font:inherit;cursor:pointer}
+.tabs button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+label{display:block;font-size:13px;color:var(--mute);margin:12px 0 4px}
+input,select{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit}
+.go{width:100%;margin-top:16px;padding:12px;border:0;border-radius:10px;background:var(--acc);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+.stop{background:transparent;color:var(--mute);border:1px solid var(--line);margin-top:10px}
+.id{word-break:break-all;font-family:ui-monospace,Consolas,monospace;background:var(--bg);padding:10px;border-radius:8px;margin-top:8px}
+#msg{margin-top:14px;color:var(--mute);min-height:1.5em}
+.hide{display:none}
+</style>
+</head>
+<body>
+<main>
+<h1>p2p_connect</h1>
+<div class="tabs">
+  <button id="tc" class="on">接続する</button>
+  <button id="th">共有する</button>
+</div>
+
+<div class="card" id="pc">
+  <label>相手の接続ID</label>
+  <input id="cid" placeholder="共有側に表示されたIDを貼り付け" autocapitalize="off" autocorrect="off">
+  <label>こちら側の入口ポート</label>
+  <input id="cport" type="number" value="25565">
+  <label>プロトコル</label>
+  <select id="cproto"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP + UDP</option></select>
+  <button class="go" id="gc">トンネルを開く</button>
+  <p style="color:var(--mute);font-size:13px">開いたあとは、このPCの localhost:入口ポート に接続すると相手側のサービスにつながります。</p>
+</div>
+
+<div class="card hide" id="ph">
+  <label>共有するローカルのアドレス</label>
+  <input id="target" value="127.0.0.1:25565">
+  <label>プロトコル</label>
+  <select id="hproto"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP + UDP</option></select>
+  <button class="go" id="gh">共有を開始</button>
+  <div id="idbox" class="hide">
+    <label>あなたの接続ID(相手に伝えてください)</label>
+    <div class="id" id="myid"></div>
+    <button class="go" id="copy" style="background:var(--card);color:var(--fg);border:1px solid var(--line)">IDをコピー</button>
+  </div>
+</div>
+
+<button class="go stop" id="stop">すべて停止</button>
+<div id="msg"></div>
+</main>
+<script>
+const invoke = window.__TAURI__.core.invoke;
+const $ = id => document.getElementById(id);
+const say = t => $("msg").textContent = t;
+function tab(c){ $("pc").classList.toggle("hide",!c); $("ph").classList.toggle("hide",c);
+  $("tc").classList.toggle("on",c); $("th").classList.toggle("on",!c); }
+$("tc").onclick=()=>tab(true); $("th").onclick=()=>tab(false);
+
+$("gc").onclick=async()=>{
+  say("接続しています…");
+  try{ await invoke("start_client",{id:$("cid").value,listenPort:Number($("cport").value),proto:$("cproto").value});
+    say("トンネルを開きました。localhost:"+$("cport").value+" をご利用ください。");
+  }catch(e){ say(String(e)); }
+};
+$("gh").onclick=async()=>{
+  say("準備しています…");
+  try{ const id=await invoke("start_host",{target:$("target").value,proto:$("hproto").value});
+    $("myid").textContent=id; $("idbox").classList.remove("hide"); say("共有を開始しました。");
+  }catch(e){ say(String(e)); }
+};
+$("copy").onclick=async()=>{ try{await navigator.clipboard.writeText($("myid").textContent); say("コピーしました。");}catch{ say("コピーに失敗しました。手動で選択してください。"); } };
+$("stop").onclick=async()=>{ await invoke("stop_all"); $("idbox").classList.add("hide"); say("停止しました。"); };
+</script>
+</body>
+</html>
