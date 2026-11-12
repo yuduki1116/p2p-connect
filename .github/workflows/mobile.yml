@@ -1,48 +1,87 @@
 name: build-mobile
 on:
   workflow_dispatch:
+    inputs:
+      ios:
+        description: "iOSもビルドする(Apple Developerの署名Secretsが必要)"
+        type: boolean
+        default: false
 
 jobs:
   android:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
+
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
-      - uses: android-actions/setup-android@v3
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: android
+
+      # ランナーに入っているAndroid SDKをそのまま使う(setup-androidは使わない)
       - name: NDK
         run: |
-          sdkmanager "ndk;27.0.12077973"
+          SDKM=$(ls -d $ANDROID_HOME/cmdline-tools/*/bin/sdkmanager | head -n1)
+          yes | $SDKM --licenses > /dev/null || true
+          $SDKM "ndk;27.0.12077973"
           echo "NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> $GITHUB_ENV
+
       - run: npm install
       - run: npx tauri icon app-icon.png
       - run: npx tauri android init
+
+      # debugキーで自動署名されるので、そのまま端末にインストールできるAPKになる
       - run: npx tauri android build --apk --debug
+
       - uses: actions/upload-artifact@v4
         with:
           name: p2p_connect-android
           path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
 
   ios:
-    # Apple Developer の署名が必要。Secrets を用意するまでは失敗します
+    if: ${{ inputs.ios }}
     runs-on: macos-latest
-    continue-on-error: true
+    env:
+      # リポジトリの Settings → Secrets and variables → Actions に登録
+      IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}                   # .p12 を base64 にしたもの
+      IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+      IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}         # .mobileprovision を base64 にしたもの
+      APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}     # Team ID
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
+
       - uses: dtolnay/rust-toolchain@stable
-        with: { targets: aarch64-apple-ios }
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ios
+
       - run: npm install
       - run: npx tauri icon app-icon.png
       - run: npx tauri ios init
-      - run: npx tauri ios build --debug
+
+      # 開発用プロビジョニング(登録した端末にだけ入る)。配布用なら app-store-connect / release-testing に変更
+      - run: npx tauri ios build --export-method debugging
+
       - uses: actions/upload-artifact@v4
         with:
           name: p2p_connect-ios
-          path: src-tauri/gen/apple/build/**/*
+          path: src-tauri/gen/apple/build/**/*.ipa
+          if-no-files-found: error
