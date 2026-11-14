@@ -1,11 +1,6 @@
 name: build-mobile
 on:
   workflow_dispatch:
-    inputs:
-      ios:
-        description: "iOSもビルドする(Apple Developerの署名Secretsが必要)"
-        type: boolean
-        default: false
 
 jobs:
   android:
@@ -50,14 +45,9 @@ jobs:
           if-no-files-found: error
 
   ios:
-    if: ${{ inputs.ios }}
+    # 署名なしのipaを作る。Sideloadlyなどで自分のApple IDで署名して入れる(無料IDなら7日間有効)
     runs-on: macos-latest
-    env:
-      # リポジトリの Settings → Secrets and variables → Actions に登録
-      IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}                   # .p12 を base64 にしたもの
-      IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
-      IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}         # .mobileprovision を base64 にしたもの
-      APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}     # Team ID
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -77,11 +67,34 @@ jobs:
       - run: npx tauri icon app-icon.png
       - run: npx tauri ios init
 
-      # 開発用プロビジョニング(登録した端末にだけ入る)。配布用なら app-store-connect / release-testing に変更
-      - run: npx tauri ios build --export-method debugging
+      - name: コード署名を無効化
+        run: |
+          python3 - <<'EOF'
+          import glob
+          p = glob.glob("src-tauri/gen/apple/*.xcodeproj/project.pbxproj")[0]
+          s = open(p).read()
+          s = s.replace("buildSettings = {", "buildSettings = {\n\t\t\t\tCODE_SIGNING_ALLOWED = NO;\n\t\t\t\tCODE_SIGNING_REQUIRED = NO;")
+          open(p, "w").write(s)
+          EOF
+
+      # 最後のexport(署名)は失敗するので無視。archiveまでできていればOK
+      - name: Build
+        run: npx tauri ios build || true
+
+      - name: ipaにまとめる
+        run: |
+          APP=$(find src-tauri/gen/apple/build -type d -name "*.app" | head -n1)
+          if [ -z "$APP" ]; then
+            APP=$(find ~/Library/Developer/Xcode/DerivedData -type d -name "*.app" -path "*iphoneos*" | head -n1)
+          fi
+          echo "APP=$APP"
+          test -n "$APP"
+          mkdir -p out/Payload
+          cp -R "$APP" out/Payload/
+          cd out && zip -qry p2p_connect_unsigned.ipa Payload
 
       - uses: actions/upload-artifact@v4
         with:
-          name: p2p_connect-ios
-          path: src-tauri/gen/apple/build/**/*.ipa
+          name: p2p_connect-ios-unsigned
+          path: out/p2p_connect_unsigned.ipa
           if-no-files-found: error
